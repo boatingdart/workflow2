@@ -1,0 +1,20 @@
+services:
+  dubbing:
+    build: .
+    container_name: video-dubbing
+    gpus: all
+
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${GPU:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+
+      HF_HOME: /models/huggingface
+
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+
+    volumes:
+      - ./app:/app/app
+      - ./input:/data/input
+      - ./output:/data/output
+      - ./models:/models

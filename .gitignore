@@ -1,0 +1,166 @@
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checkers / linters
+.mypy_cache/
+.pyright/
+.ruff_cache/
+
+
+# ============================================================
+# Environment / secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+# Hugging Face / API tokens
+*.token
+
+
+# ============================================================
+# Project data
+# ============================================================
+
+# Input videos
+input/*
+!input/.gitkeep
+
+# Generated output
+output/*
+!output/.gitkeep
+
+# Temporary processing files
+tmp/
+temp/
+cache/
+
+# Benchmark results
+benchmarks/results/
+benchmarks/output/
+
+
+# ============================================================
+# AI Models
+# ============================================================
+
+# Downloaded model weights
+models/*
+!models/.gitkeep
+
+# Hugging Face cache
+.huggingface/
+huggingface/
+.cache/huggingface/
+
+# PyTorch cache
+.cache/torch/
+torch_cache/
+
+# General model caches
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+
+
+# ============================================================
+# Audio / video generated during processing
+# ============================================================
+
+*.wav
+*.mp3
+*.flac
+*.aac
+*.m4a
+*.ogg
+
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+
+# Allow small test assets if you explicitly want them tracked
+# Uncomment and adjust as needed:
+# !tests/data/test.mp4
+
+
+# ============================================================
+# Logs
+# ============================================================
+
+*.log
+logs/
+
+
+# ============================================================
+# Docker
+# ============================================================
+
+docker-compose.override.yml
+
+
+# ============================================================
+# IDE / Editor
+# ============================================================
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+.idea/
+*.iml
+
+# Vim
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+
+# ============================================================
+# OS / miscellaneous
+# ============================================================
+
+*.tmp
+*.bak
+*.old
+
+# Local development files
+*.local
+
+rod
