@@ -64,3 +64,72 @@ def save_metadata(metadata, output_path):
             indent=2,
             ensure_ascii=False,
         )
+
+
+def extract_source_audio(video_path, output_path):
+    """
+    Extract the original audio as PCM WAV.
+
+    The original channel layout and sample rate are preserved.
+    """
+
+    video_path = Path(video_path)
+    output_path = Path(output_path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-c:a",
+        "pcm_s16le",
+        str(output_path),
+    ]
+
+    run_command(command)
+
+
+def extract_speech_audio(video_path, output_path):
+    """
+    Extract audio normalized for speech recognition.
+
+    Output:
+        PCM signed 16-bit
+        16 kHz
+        mono
+    """
+
+    video_path = Path(video_path)
+    output_path = Path(output_path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        str(output_path),
+    ]
+
+    run_command(command)
