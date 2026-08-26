@@ -164,3 +164,17 @@ Desktop.ini
 *.local
 
 rod
+
+# Pipeline data
+input/*
+!input/.gitkeep
+
+work/*
+!work/.gitkeep
+
+output/*
+!output/.gitkeep
+
+# AI models
+models/*
+!models/.gitkeep

@@ -14,7 +14,7 @@ services:
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
 
     volumes:
-      - ./app:/app/app
-      - ./input:/data/input
-      - ./output:/data/output
+      - ./input:/input
+      - ./work:/work
+      - ./output:/output
       - ./models:/models
