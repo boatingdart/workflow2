@@ -7,6 +7,7 @@ from media import (
     inspect_video,
     save_metadata,
 )
+from transcription import transcribe_audio
 
 
 INPUT_DIR = Path("/input")
@@ -103,6 +104,18 @@ def main():
     print("=" * 60)
     print("MEDIA EXTRACTION: PASS")
     print("=" * 60)
+
+    print()
+    print("=" * 60)
+    print("SPEECH-TO-TEXT")
+    print("=" * 60)
+
+    transcript_path = WORK_DIR / "transcript.json"
+
+    transcribe_audio(
+        speech_audio,
+        transcript_path,
+    )
 
 
 if __name__ == "__main__":
