@@ -27,9 +27,16 @@ def overlap(start_a, end_a, start_b, end_b):
 
 def find_speaker(word_start, word_end, diarization_segments):
     """
-    Assign a word to the speaker whose diarization segment
-    has the greatest temporal overlap with the word.
+    Assign a word to the speaker with the greatest temporal overlap.
+
+    Also return overlap information so we can inspect borderline
+    assignments and improve the alignment algorithm later.
     """
+
+    word_duration = max(
+        0.0,
+        word_end - word_start,
+    )
 
     best_speaker = None
     best_overlap = 0.0
@@ -49,8 +56,17 @@ def find_speaker(word_start, word_end, diarization_segments):
             best_overlap = current_overlap
             best_speaker = segment["speaker"]
 
-    return best_speaker
+    overlap_ratio = (
+        best_overlap / word_duration
+        if word_duration > 0
+        else 0.0
+    )
 
+    return (
+        best_speaker,
+        round(best_overlap, 3),
+        round(overlap_ratio, 3),
+    )
 
 def align():
     print()
@@ -90,7 +106,7 @@ def align():
             word_start = word["start"]
             word_end = word["end"]
 
-            speaker = find_speaker(
+            speaker, speaker_overlap, speaker_overlap_ratio = find_speaker(
                 word_start,
                 word_end,
                 diarization_segments,
@@ -105,6 +121,8 @@ def align():
                         "probability"
                     ),
                     "speaker": speaker,
+                    "speaker_overlap": speaker_overlap,
+                    "speaker_overlap_ratio": speaker_overlap_ratio,
                 }
             )
 

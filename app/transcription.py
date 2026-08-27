@@ -77,10 +77,13 @@ def transcribe_audio(audio_path, output_path):
     print(f"Audio: {audio_path}")
 
     transcription_start = time.perf_counter()
-
+    
     segments, info = model.transcribe(
         str(audio_path),
+        language="ja",
         beam_size=beam_size,
+        best_of=5,
+        temperature=0.0,
         vad_filter=True,
         word_timestamps=True,
     )
@@ -162,3 +165,12 @@ def transcribe_audio(audio_path, output_path):
     print("TRANSCRIPTION: PASS")
 
     return result
+
+if __name__ == "__main__":
+    audio_path = Path("/work/speech_audio.wav")
+    output_path = Path("/work/transcript.json")
+
+    transcribe_audio(
+        audio_path,
+        output_path,
+    )
