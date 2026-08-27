@@ -8,6 +8,11 @@ from media import (
     save_metadata,
 )
 from transcription import transcribe_audio
+from diarize import main as run_diarization
+from alignment import align
+from segment_dialogue import main as run_segmentation
+from clean_dialogue import main as run_cleanup
+from translate_local import main as run_translation
 
 
 INPUT_DIR = Path("/input")
@@ -46,20 +51,38 @@ def find_input_video():
 
 
 def main():
-    print("Starting video dubbing workflow...")
+    print()
+    print("=" * 60)
+    print("VIDEO DUBBING WORKFLOW")
+    print("=" * 60)
+    print()
+
+    # ---------------------------------------------------------
+    # GPU
+    # ---------------------------------------------------------
 
     gpu = print_gpu_info()
 
     print()
     print(f"Selected GPU profile: {gpu['profile']}")
 
+    # ---------------------------------------------------------
+    # Find input video
+    # ---------------------------------------------------------
+
     video = find_input_video()
+
+    print()
+    print(f"Input video: {video}")
+
+    # ---------------------------------------------------------
+    # Video inspection
+    # ---------------------------------------------------------
 
     print()
     print("=" * 60)
     print("VIDEO INSPECTION")
     print("=" * 60)
-    print(f"Input: {video}")
 
     metadata = inspect_video(video)
 
@@ -71,6 +94,10 @@ def main():
     )
 
     print(f"Metadata: {metadata_path}")
+
+    # ---------------------------------------------------------
+    # Source audio
+    # ---------------------------------------------------------
 
     print()
     print("=" * 60)
@@ -85,6 +112,10 @@ def main():
     )
 
     print(f"Source audio: {source_audio}")
+
+    # ---------------------------------------------------------
+    # Speech audio
+    # ---------------------------------------------------------
 
     print()
     print("=" * 60)
@@ -105,6 +136,10 @@ def main():
     print("MEDIA EXTRACTION: PASS")
     print("=" * 60)
 
+    # ---------------------------------------------------------
+    # Whisper transcription
+    # ---------------------------------------------------------
+
     print()
     print("=" * 60)
     print("SPEECH-TO-TEXT")
@@ -116,6 +151,83 @@ def main():
         speech_audio,
         transcript_path,
     )
+
+    # ---------------------------------------------------------
+    # Speaker diarization
+    # ---------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("SPEAKER DIARIZATION")
+    print("=" * 60)
+
+    run_diarization()
+
+    # ---------------------------------------------------------
+    # Word / speaker alignment
+    # ---------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("TRANSCRIPTION / DIARIZATION ALIGNMENT")
+    print("=" * 60)
+
+    align()
+
+    # ---------------------------------------------------------
+    # Dialogue segmentation
+    # ---------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("DIALOGUE SEGMENTATION")
+    print("=" * 60)
+
+    run_segmentation()
+
+    # ---------------------------------------------------------
+    # Dialogue cleanup
+    # ---------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("DIALOGUE CLEANUP")
+    print("=" * 60)
+
+    run_cleanup()
+
+    # ---------------------------------------------------------
+    # Local Japanese → English translation
+    # ---------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("LOCAL TRANSLATION")
+    print("=" * 60)
+
+    run_translation()
+
+    # ---------------------------------------------------------
+    # Complete
+    # ---------------------------------------------------------
+
+    print()
+    print("=" * 60)
+    print("VIDEO DUBBING WORKFLOW: PASS")
+    print("=" * 60)
+
+    print()
+    print("Generated files:")
+    print(f"  - {metadata_path}")
+    print(f"  - {source_audio}")
+    print(f"  - {speech_audio}")
+    print(f"  - {WORK_DIR / 'transcript.json'}")
+    print(f"  - {WORK_DIR / 'diarization.json'}")
+    print(f"  - {WORK_DIR / 'aligned_transcript.json'}")
+    print(f"  - {WORK_DIR / 'dialogue.json'}")
+    print(f"  - {WORK_DIR / 'clean_dialogue.json'}")
+    print(f"  - {WORK_DIR / 'translated_dialogue.json'}")
+    print()
 
 
 if __name__ == "__main__":

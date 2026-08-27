@@ -24,7 +24,9 @@ RUN pip install \
         torch \
         numpy \
         faster-whisper \
-        pyannote.audio==4.0.7
+        pyannote.audio==4.0.7 \
+        transformers \
+        sentencepiece
 
 COPY app/ ./app/
 

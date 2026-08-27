@@ -16,16 +16,27 @@ SHORT_FRAGMENT_LENGTH = 2
 
 def load_json(path):
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+        raise FileNotFoundError(
+            f"File not found: {path}"
+        )
 
-    with path.open("r", encoding="utf-8") as file:
+    with path.open(
+        "r",
+        encoding="utf-8",
+    ) as file:
         return json.load(file)
 
 
 def save_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    with path.open("w", encoding="utf-8") as file:
+    with path.open(
+        "w",
+        encoding="utf-8",
+    ) as file:
         json.dump(
             data,
             file,
@@ -51,7 +62,9 @@ def clean_segments(segments):
     cleaned = []
 
     for segment in segments:
-        text = str(segment.get("text", "")).strip()
+        text = str(
+            segment.get("text", "")
+        ).strip()
 
         if not text:
             continue
@@ -141,10 +154,12 @@ def add_ids(segments):
                 "id": index,
                 "speaker": segment["speaker"],
                 "start": round(
-                    segment["start"], 3
+                    segment["start"],
+                    3,
                 ),
                 "end": round(
-                    segment["end"], 3
+                    segment["end"],
+                    3,
                 ),
                 "text": segment["text"],
             }
@@ -153,19 +168,32 @@ def add_ids(segments):
     return result
 
 
-def main():
+def clean_dialogue(
+    input_path=INPUT_PATH,
+    output_path=OUTPUT_PATH,
+):
+    """
+    Clean dialogue.json and write clean_dialogue.json.
+
+    Can be called directly from main.py while still
+    supporting standalone execution.
+    """
+
     print()
     print("=" * 60)
     print("DIALOGUE CLEANUP")
     print("=" * 60)
 
-    print(f"Input:  {INPUT_PATH}")
-    print(f"Output: {OUTPUT_PATH}")
+    print(f"Input:  {input_path}")
+    print(f"Output: {output_path}")
     print()
 
-    data = load_json(INPUT_PATH)
+    data = load_json(input_path)
 
-    segments = data.get("segments", [])
+    segments = data.get(
+        "segments",
+        [],
+    )
 
     print(
         f"Input dialogue lines: {len(segments)}"
@@ -173,7 +201,7 @@ def main():
 
     segments = clean_segments(segments)
 
-    before_merge = len(segments)
+    after_cleanup = len(segments)
 
     segments = merge_fragments(segments)
 
@@ -202,12 +230,12 @@ def main():
     }
 
     save_json(
-        OUTPUT_PATH,
+        output_path,
         result,
     )
 
     print(
-        f"After cleanup:      {before_merge}"
+        f"After cleanup:      {after_cleanup}"
     )
     print(
         f"After merging:      {after_merge}"
@@ -220,12 +248,18 @@ def main():
         print(f"  - {speaker}")
 
     print()
-    print(f"Saved: {OUTPUT_PATH}")
+    print(f"Saved: {output_path}")
 
     print()
     print("=" * 60)
     print("DIALOGUE CLEANUP: PASS")
     print("=" * 60)
+
+    return result
+
+
+def main():
+    clean_dialogue()
 
 
 if __name__ == "__main__":

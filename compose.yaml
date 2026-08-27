@@ -14,6 +14,11 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8_float16}
 
+      TRANSLATION_MODEL: ${TRANSLATION_MODEL:-Helsinki-NLP/opus-mt-ja-en}
+      TRANSLATION_MODEL_DIR: /models/translation
+      TRANSLATION_DEVICE: ${TRANSLATION_DEVICE:-auto}
+      TRANSLATION_MAX_LENGTH: ${TRANSLATION_MAX_LENGTH:-256}
+
     volumes:
       - ./app:/app/app
       - ./input:/input
