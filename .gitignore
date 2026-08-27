@@ -178,3 +178,5 @@ output/*
 # AI models
 models/*
 !models/.gitkeep
+
+.env

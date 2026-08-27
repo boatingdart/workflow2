@@ -23,7 +23,8 @@ RUN pip install --upgrade pip setuptools wheel
 RUN pip install \
         torch \
         numpy \
-        faster-whisper
+        faster-whisper \
+        pyannote.audio==4.0.7
 
 COPY app/ ./app/
 

@@ -9,11 +9,13 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
 
       HF_HOME: /models/huggingface
+      HF_TOKEN: ${HF_TOKEN}
 
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
-      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8_float16}
 
     volumes:
+      - ./app:/app/app
       - ./input:/input
       - ./work:/work
       - ./output:/output
