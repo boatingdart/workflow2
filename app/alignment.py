@@ -99,20 +99,28 @@ def align():
             "No transcription segments found."
         )
 
-    aligned_words = []
+    aligned_segments = []
 
-    for segment in transcription_segments:
+    for segment_id, segment in enumerate(
+        transcription_segments
+    ):
+        words = []
+
         for word in segment.get("words", []):
             word_start = word["start"]
             word_end = word["end"]
 
-            speaker, speaker_overlap, speaker_overlap_ratio = find_speaker(
+            (
+                speaker,
+                speaker_overlap,
+                speaker_overlap_ratio,
+            ) = find_speaker(
                 word_start,
                 word_end,
                 diarization_segments,
             )
 
-            aligned_words.append(
+            words.append(
                 {
                     "start": word_start,
                     "end": word_end,
@@ -122,36 +130,36 @@ def align():
                     ),
                     "speaker": speaker,
                     "speaker_overlap": speaker_overlap,
-                    "speaker_overlap_ratio": speaker_overlap_ratio,
+                    "speaker_overlap_ratio": (
+                        speaker_overlap_ratio
+                    ),
                 }
             )
 
-    # Group consecutive words belonging to the same speaker.
-    aligned_segments = []
+        if not words:
+            continue
 
-    for word in aligned_words:
-        speaker = word["speaker"]
-
-        if (
-            aligned_segments
-            and aligned_segments[-1]["speaker"] == speaker
-        ):
-            current = aligned_segments[-1]
-
-            current["end"] = word["end"]
-            current["words"].append(word)
-            current["text"] += word["word"]
-
-        else:
-            aligned_segments.append(
-                {
-                    "speaker": speaker,
-                    "start": word["start"],
-                    "end": word["end"],
-                    "text": word["word"],
-                    "words": [word],
-                }
-            )
+        aligned_segments.append(
+            {
+                "id": segment.get(
+                    "id",
+                    segment_id,
+                ),
+                "start": segment.get(
+                    "start",
+                    words[0]["start"],
+                ),
+                "end": segment.get(
+                    "end",
+                    words[-1]["end"],
+                ),
+                "text": "".join(
+                    word["word"]
+                    for word in words
+                ),
+                "words": words,
+            }
+        )
 
     result = {
         "audio": transcription.get("audio"),
@@ -183,17 +191,29 @@ def align():
             ensure_ascii=False,
         )
 
+    aligned_words = sum(
+        len(segment["words"])
+        for segment in aligned_segments
+    )
+
     speakers = sorted(
         {
-            segment["speaker"]
+            word["speaker"]
             for segment in aligned_segments
-            if segment["speaker"] is not None
+            for word in segment["words"]
+            if word["speaker"] is not None
         }
     )
 
-    print(f"Words aligned:    {len(aligned_words)}")
-    print(f"Output segments:  {len(aligned_segments)}")
-    print(f"Speakers:         {len(speakers)}")
+    print(
+        f"Words aligned:    {aligned_words}"
+    )
+    print(
+        f"Output segments:  {len(aligned_segments)}"
+    )
+    print(
+        f"Speakers:         {len(speakers)}"
+    )
 
     for speaker in speakers:
         print(f"  - {speaker}")

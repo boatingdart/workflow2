@@ -83,10 +83,14 @@ def clean_segments(segments):
 
 def merge_fragments(segments):
     """
-    Merge tiny fragments when they are clearly part of the
-    same speaker's nearby utterance.
+    Merge very small transcription fragments when they are likely
+    to be pieces of a larger utterance.
 
-    We deliberately keep this conservative.
+    Speaker assignment is treated conservatively:
+    - Same-speaker fragments are safe to merge.
+    - A tiny fragment immediately before another segment may be
+      merged into the following segment when the timing strongly
+      suggests it is part of the same utterance.
     """
 
     if not segments:
@@ -116,6 +120,10 @@ def merge_fragments(segments):
                 <= SHORT_FRAGMENT_LENGTH
             )
 
+            # -------------------------------------------------
+            # Same speaker
+            # -------------------------------------------------
+
             if (
                 same_speaker
                 and tiny
@@ -123,6 +131,41 @@ def merge_fragments(segments):
             ):
                 merged = {
                     "speaker": current["speaker"],
+                    "start": current["start"],
+                    "end": following["end"],
+                    "text": (
+                        current["text"]
+                        + following["text"]
+                    ),
+                }
+
+                result.append(merged)
+                i += 2
+                continue
+
+            # -------------------------------------------------
+            # Tiny cross-speaker fragment
+            # -------------------------------------------------
+            #
+            # Example:
+            #
+            #   SPEAKER_00: 綺
+            #   SPEAKER_01: 麗ね
+            #
+            # → 綺麗ね
+            #
+            # The following segment gets the resulting speaker
+            # because the larger portion belongs to that speaker.
+            # -------------------------------------------------
+
+            if (
+                not same_speaker
+                and tiny
+                and gap <= 0.10
+                and len(following["text"]) >= 2
+            ):
+                merged = {
+                    "speaker": following["speaker"],
                     "start": current["start"],
                     "end": following["end"],
                     "text": (
