@@ -15,35 +15,50 @@ AUDIO_FILE = Path("/work/speech_audio.wav")
 INPUT_FILE = Path("/work/reconstructed_speakers.json")
 OUTPUT_FILE = Path("/work/identified_speakers.json")
 
+# Persistent speaker database
+PROFILE_DIR = Path("/work/speaker_profiles")
+
 EMBEDDING_MODEL = "pyannote/wespeaker-voxceleb-resnet34-LM"
 
-# Cosine similarity threshold.
+# Conservative matching threshold.
 #
-# Higher = more conservative.
-# Lower  = more likely to merge speakers.
+# A new speaker is assigned to an existing identity ONLY when
+# the similarity reaches this threshold.
 #
-# Start conservative and adjust after seeing the output.
 SIMILARITY_THRESHOLD = 0.72
 
-# Very short pieces of audio are unreliable for speaker identity.
 MIN_SAMPLE_DURATION = 0.50
 
-# Short unidentified utterances can inherit the surrounding
-# speaker when they are sufficiently close in time.
+# Maximum number of embedding samples retained per identity.
+#
+# Keeping several samples makes the identity more robust to
+# changes in emotion, volume, microphone position, etc.
+MAX_PROFILE_SAMPLES = 10
+
+# Unknown short utterances can inherit identity from a nearby
+# known turn.
 MAX_UNKNOWN_GAP = 1.00
 
 
 # ============================================================
-# HELPERS
+# JSON
 # ============================================================
 
 def load_json(path: Path) -> Dict:
+
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def save_json(path: Path, data: Dict):
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     with open(path, "w", encoding="utf-8") as f:
+
         json.dump(
             data,
             f,
@@ -52,41 +67,47 @@ def save_json(path: Path, data: Dict):
         )
 
 
-def cosine_similarity(a: torch.Tensor, b: torch.Tensor) -> float:
-    a = a.flatten().float()
-    b = b.flatten().float()
-
-    a = a / (torch.norm(a) + 1e-8)
-    b = b / (torch.norm(b) + 1e-8)
-
-    return float(torch.dot(a, b))
-
+# ============================================================
+# AUDIO
+# ============================================================
 
 def load_audio(path: Path):
-    waveform, sample_rate = torchaudio.load(str(path))
 
-    # Convert stereo -> mono
+    waveform, sample_rate = torchaudio.load(
+        str(path)
+    )
+
+    # Stereo -> mono
     if waveform.shape[0] > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
 
-    # Model expects 16 kHz.
+        waveform = waveform.mean(
+            dim=0,
+            keepdim=True
+        )
+
+    # Resample -> 16 kHz
     if sample_rate != 16000:
+
         resampler = torchaudio.transforms.Resample(
             sample_rate,
             16000
         )
-        waveform = resampler(waveform)
+
+        waveform = resampler(
+            waveform
+        )
+
         sample_rate = 16000
 
     return waveform, sample_rate
 
 
 def extract_audio(
-    waveform: torch.Tensor,
-    sample_rate: int,
-    start: float,
-    end: float
-) -> torch.Tensor:
+    waveform,
+    sample_rate,
+    start,
+    end
+):
 
     start_sample = max(
         0,
@@ -99,9 +120,15 @@ def extract_audio(
     )
 
     if end_sample <= start_sample:
-        return torch.empty((1, 0))
 
-    return waveform[:, start_sample:end_sample]
+        return torch.empty(
+            (1, 0)
+        )
+
+    return waveform[
+        :,
+        start_sample:end_sample
+    ]
 
 
 # ============================================================
@@ -109,70 +136,110 @@ def extract_audio(
 # ============================================================
 
 def create_embedding(
-    inference: Inference,
-    audio: torch.Tensor,
-    sample_rate: int
-) -> Optional[torch.Tensor]:
+    inference,
+    audio,
+    sample_rate
+):
 
     if audio.shape[1] == 0:
+
         return None
 
-    duration = audio.shape[1] / sample_rate
+    duration = (
+        audio.shape[1]
+        /
+        sample_rate
+    )
 
     if duration < MIN_SAMPLE_DURATION:
+
         return None
 
-    # pyannote Inference accepts a dictionary containing
-    # waveform and sample rate.
     try:
+
         embedding = inference({
+
             "waveform": audio,
+
             "sample_rate": sample_rate
         })
 
-        if hasattr(embedding, "data"):
+        if hasattr(
+            embedding,
+            "data"
+        ):
+
             embedding = torch.tensor(
                 embedding.data,
                 dtype=torch.float32
             )
 
-        elif not isinstance(embedding, torch.Tensor):
+        elif not isinstance(
+            embedding,
+            torch.Tensor
+        ):
+
             embedding = torch.tensor(
                 embedding,
                 dtype=torch.float32
             )
 
-        return embedding.flatten()
+        embedding = embedding.flatten()
+
+        # Normalize
+        embedding = embedding / (
+            torch.norm(embedding)
+            +
+            1e-8
+        )
+
+        return embedding
 
     except Exception as e:
+
         print(
             f"WARNING: embedding failed: {e}"
         )
+
         return None
 
 
 # ============================================================
-# SPEAKER PROFILE
+# SPEAKER PROFILES FROM CURRENT VIDEO
 # ============================================================
 
-def build_speaker_profiles(
-    turns: List[Dict],
-    waveform: torch.Tensor,
-    sample_rate: int,
-    inference: Inference
+def build_profiles(
+    turns,
+    waveform,
+    sample_rate,
+    inference
 ):
 
     profiles = {}
 
     for turn in turns:
 
-        speaker = turn.get("speaker")
+        speaker = turn.get(
+            "speaker"
+        )
 
         if speaker is None:
+
             continue
 
-        start = float(turn["start"])
-        end = float(turn["end"])
+        start = float(
+            turn["start"]
+        )
+
+        end = float(
+            turn["end"]
+        )
+
+        duration = end - start
+
+        if duration < MIN_SAMPLE_DURATION:
+
+            continue
 
         audio = extract_audio(
             waveform,
@@ -188,15 +255,20 @@ def build_speaker_profiles(
         )
 
         if embedding is None:
+
             continue
 
-        if speaker not in profiles:
-            profiles[speaker] = []
+        profiles.setdefault(
+            speaker,
+            []
+        ).append({
 
-        profiles[speaker].append({
             "start": start,
+
             "end": end,
-            "duration": end - start,
+
+            "duration": duration,
+
             "embedding": embedding
         })
 
@@ -204,66 +276,130 @@ def build_speaker_profiles(
 
 
 # ============================================================
-# PROFILE CENTROIDS
+# CENTROIDS
 # ============================================================
 
-def calculate_centroids(profiles):
+def calculate_centroids(
+    profiles
+):
 
     centroids = {}
 
     for speaker, samples in profiles.items():
 
-        if not samples:
-            continue
-
         embeddings = [
-            sample["embedding"]
-            for sample in samples
+            x["embedding"]
+            for x in samples
         ]
 
-        matrix = torch.stack(embeddings)
+        if not embeddings:
 
-        centroid = matrix.mean(dim=0)
+            continue
 
-        centroid = centroid / (
-            torch.norm(centroid) + 1e-8
+        matrix = torch.stack(
+            embeddings
         )
 
-        centroids[speaker] = centroid
+        centroid = matrix.mean(
+            dim=0
+        )
+
+        centroid = centroid / (
+            torch.norm(centroid)
+            +
+            1e-8
+        )
+
+        centroids[
+            speaker
+        ] = centroid
 
     return centroids
 
 
 # ============================================================
-# SPEAKER COMPARISON
+# COSINE SIMILARITY
 # ============================================================
 
-def compare_speakers(centroids):
+def cosine_similarity(
+    a,
+    b
+):
 
-    speakers = list(centroids.keys())
+    a = a.flatten().float()
+
+    b = b.flatten().float()
+
+    a = a / (
+        torch.norm(a)
+        +
+        1e-8
+    )
+
+    b = b / (
+        torch.norm(b)
+        +
+        1e-8
+    )
+
+    return float(
+        torch.dot(a, b)
+    )
+
+
+# ============================================================
+# CURRENT VIDEO SPEAKER COMPARISON
+# ============================================================
+
+def compare_speakers(
+    centroids
+):
+
+    speakers = list(
+        centroids.keys()
+    )
 
     comparisons = []
 
-    for i in range(len(speakers)):
+    for i in range(
+        len(speakers)
+    ):
 
-        for j in range(i + 1, len(speakers)):
+        for j in range(
+            i + 1,
+            len(speakers)
+        ):
 
-            speaker_a = speakers[i]
-            speaker_b = speakers[j]
+            a = speakers[i]
+
+            b = speakers[j]
 
             similarity = cosine_similarity(
-                centroids[speaker_a],
-                centroids[speaker_b]
+                centroids[a],
+                centroids[b]
             )
 
             comparisons.append({
-                "speaker_a": speaker_a,
-                "speaker_b": speaker_b,
-                "similarity": round(similarity, 4)
+
+                "speaker_a": a,
+
+                "speaker_b": b,
+
+                "similarity": round(
+                    similarity,
+                    4
+                ),
+
+                "same_speaker": (
+                    similarity
+                    >=
+                    SIMILARITY_THRESHOLD
+                )
             })
 
     comparisons.sort(
-        key=lambda x: x["similarity"],
+        key=lambda x:
+        x["similarity"],
         reverse=True
     )
 
@@ -271,100 +407,649 @@ def compare_speakers(centroids):
 
 
 # ============================================================
-# UNION-FIND CLUSTERING
+# TENSOR SERIALIZATION
 # ============================================================
 
-class UnionFind:
-
-    def __init__(self, items):
-        self.parent = {
-            item: item
-            for item in items
-        }
-
-    def find(self, item):
-
-        if self.parent[item] != item:
-            self.parent[item] = self.find(
-                self.parent[item]
-            )
-
-        return self.parent[item]
-
-    def union(self, a, b):
-
-        root_a = self.find(a)
-        root_b = self.find(b)
-
-        if root_a != root_b:
-            self.parent[root_b] = root_a
-
-
-def cluster_speakers(
-    centroids,
-    threshold
+def embedding_to_list(
+    embedding
 ):
 
-    speakers = list(centroids.keys())
+    return [
+        float(x)
+        for x in embedding
+        .detach()
+        .cpu()
+        .flatten()
+        .tolist()
+    ]
 
-    uf = UnionFind(speakers)
 
-    comparisons = compare_speakers(
-        centroids
+def list_to_embedding(
+    values
+):
+
+    tensor = torch.tensor(
+        values,
+        dtype=torch.float32
     )
 
-    for comparison in comparisons:
+    tensor = tensor / (
+        torch.norm(tensor)
+        +
+        1e-8
+    )
 
-        if comparison["similarity"] >= threshold:
+    return tensor
 
-            uf.union(
-                comparison["speaker_a"],
-                comparison["speaker_b"]
+
+# ============================================================
+# PERSISTENT PROFILE DIRECTORY
+# ============================================================
+
+def ensure_profile_directory():
+
+    PROFILE_DIR.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+
+# ============================================================
+# FIND NEXT IDENTITY NUMBER
+# ============================================================
+
+def get_next_identity_number():
+
+    ensure_profile_directory()
+
+    highest = 0
+
+    for path in PROFILE_DIR.glob(
+        "IDENTITY_*.json"
+    ):
+
+        try:
+
+            number = int(
+                path.stem.split("_")[-1]
             )
 
-    clusters = {}
+            highest = max(
+                highest,
+                number
+            )
 
-    for speaker in speakers:
+        except Exception:
 
-        root = uf.find(speaker)
+            continue
 
-        clusters.setdefault(
-            root,
-            []
-        ).append(speaker)
-
-    return list(clusters.values()), comparisons
+    return highest + 1
 
 
 # ============================================================
-# CREATE PERSISTENT NAMES
+# LOAD PERSISTENT PROFILES
 # ============================================================
 
-def create_identity_map(clusters):
+def load_persistent_profiles():
+
+    ensure_profile_directory()
+
+    profiles = {}
+
+    for path in sorted(
+        PROFILE_DIR.glob(
+            "IDENTITY_*.json"
+        )
+    ):
+
+        try:
+
+            data = load_json(
+                path
+            )
+
+            identity = data.get(
+                "identity"
+            )
+
+            embeddings = data.get(
+                "embeddings",
+                []
+            )
+
+            if not identity:
+
+                continue
+
+            usable_embeddings = []
+
+            for values in embeddings:
+
+                if not values:
+
+                    continue
+
+                usable_embeddings.append(
+                    list_to_embedding(
+                        values
+                    )
+                )
+
+            if not usable_embeddings:
+
+                continue
+
+            profiles[
+                identity
+            ] = {
+
+                "identity": identity,
+
+                "embedding_model":
+                    data.get(
+                        "embedding_model",
+                        EMBEDDING_MODEL
+                    ),
+
+                "samples":
+                    data.get(
+                        "samples",
+                        len(
+                            usable_embeddings
+                        )
+                    ),
+
+                "total_duration":
+                    data.get(
+                        "total_duration",
+                        0.0
+                    ),
+
+                "embeddings":
+                    usable_embeddings,
+
+                "created":
+                    data.get(
+                        "created"
+                    ),
+
+                "updated":
+                    data.get(
+                        "updated"
+                    )
+            }
+
+        except Exception as e:
+
+            print(
+                f"WARNING: failed to load "
+                f"profile {path}: {e}"
+            )
+
+    return profiles
+
+
+# ============================================================
+# PERSISTENT PROFILE CENTROID
+# ============================================================
+
+def profile_centroid(
+    profile
+):
+
+    embeddings = profile.get(
+        "embeddings",
+        []
+    )
+
+    if not embeddings:
+
+        return None
+
+    matrix = torch.stack(
+        embeddings
+    )
+
+    centroid = matrix.mean(
+        dim=0
+    )
+
+    centroid = centroid / (
+        torch.norm(centroid)
+        +
+        1e-8
+    )
+
+    return centroid
+
+
+# ============================================================
+# MATCH CURRENT SPEAKER AGAINST DATABASE
+# ============================================================
+
+def match_existing_identity(
+    embedding,
+    persistent_profiles
+):
+
+    best_identity = None
+
+    best_similarity = -1.0
+
+    for identity, profile in (
+        persistent_profiles.items()
+    ):
+
+        centroid = profile_centroid(
+            profile
+        )
+
+        if centroid is None:
+
+            continue
+
+        similarity = cosine_similarity(
+            embedding,
+            centroid
+        )
+
+        if similarity > best_similarity:
+
+            best_similarity = similarity
+
+            best_identity = identity
+
+    if (
+        best_identity is not None
+        and
+        best_similarity
+        >=
+        SIMILARITY_THRESHOLD
+    ):
+
+        return (
+            best_identity,
+            best_similarity
+        )
+
+    return (
+        None,
+        best_similarity
+    )
+
+
+# ============================================================
+# CREATE NEW PROFILE
+# ============================================================
+
+def create_new_profile(
+    embedding,
+    duration
+):
+
+    number = get_next_identity_number()
+
+    identity = (
+        f"IDENTITY_{number:03d}"
+    )
+
+    profile = {
+
+        "identity": identity,
+
+        "embedding_model":
+            EMBEDDING_MODEL,
+
+        "samples": 1,
+
+        "total_duration":
+            round(
+                duration,
+                3
+            ),
+
+        "embeddings": [
+            embedding_to_list(
+                embedding
+            )
+        ]
+    }
+
+    save_json(
+        PROFILE_DIR /
+        f"{identity}.json",
+        profile
+    )
+
+    return (
+        identity,
+        profile
+    )
+
+
+# ============================================================
+# UPDATE EXISTING PROFILE
+# ============================================================
+
+def update_profile(
+    profile,
+    embedding,
+    duration
+):
+
+    embeddings = profile.setdefault(
+        "embeddings",
+        []
+    )
+
+    embeddings.append(
+        embedding
+    )
+
+    # Keep the profile bounded.
+    #
+    # We keep the most recent samples.
+    #
+    if len(embeddings) > MAX_PROFILE_SAMPLES:
+
+        embeddings = embeddings[
+            -MAX_PROFILE_SAMPLES:
+        ]
+
+        profile[
+            "embeddings"
+        ] = embeddings
+
+    profile[
+        "samples"
+    ] = len(
+        profile["embeddings"]
+    )
+
+    profile[
+        "total_duration"
+    ] = round(
+        float(
+            profile.get(
+                "total_duration",
+                0.0
+            )
+        )
+        +
+        duration,
+        3
+    )
+
+    profile[
+        "embedding_model"
+    ] = EMBEDDING_MODEL
+
+    return profile
+
+
+# ============================================================
+# SAVE PROFILE
+# ============================================================
+
+def save_profile(
+    identity,
+    profile
+):
+
+    serializable = {
+
+        "identity":
+            identity,
+
+        "embedding_model":
+            profile.get(
+                "embedding_model",
+                EMBEDDING_MODEL
+            ),
+
+        "samples":
+            profile.get(
+                "samples",
+                0
+            ),
+
+        "total_duration":
+            profile.get(
+                "total_duration",
+                0.0
+            ),
+
+        "embeddings": [
+
+            embedding_to_list(
+                x
+            )
+            if isinstance(
+                x,
+                torch.Tensor
+            )
+            else x
+
+            for x in profile.get(
+                "embeddings",
+                []
+            )
+        ]
+    }
+
+    save_json(
+        PROFILE_DIR /
+        f"{identity}.json",
+        serializable
+    )
+
+
+# ============================================================
+# ASSIGN PERSISTENT IDENTITIES
+# ============================================================
+
+def assign_persistent_identities(
+    profiles,
+    centroids
+):
+
+    persistent_profiles = (
+        load_persistent_profiles()
+    )
 
     identity_map = {}
 
-    # Sort clusters by earliest speaker label.
-    clusters = sorted(
-        clusters,
-        key=lambda c: sorted(c)[0]
+    identity_matches = []
+
+    # --------------------------------------------------------
+    # Process strongest / longest speakers first.
+    #
+    # Longer samples normally provide better embeddings.
+    # --------------------------------------------------------
+
+    speaker_order = sorted(
+
+        centroids.keys(),
+
+        key=lambda speaker:
+        sum(
+            x["duration"]
+            for x in profiles.get(
+                speaker,
+                []
+            )
+        ),
+
+        reverse=True
     )
 
-    for index, cluster in enumerate(clusters):
+    # --------------------------------------------------------
+    # Prevent two NEW speakers in the same video from being
+    # assigned to the same persistent identity.
+    # --------------------------------------------------------
 
-        identity = f"SPEAKER_{chr(ord('A') + index)}"
+    identities_used_this_video = set()
 
-        for diarization_speaker in cluster:
+    for speaker in speaker_order:
 
-            identity_map[
-                diarization_speaker
-            ] = identity
+        embedding = centroids[
+            speaker
+        ]
 
-    return identity_map
+        duration = sum(
+            x["duration"]
+            for x in profiles.get(
+                speaker,
+                []
+            )
+        )
+
+        best_identity = None
+
+        best_similarity = -1.0
+
+        # ----------------------------------------------------
+        # Compare against existing persistent identities.
+        # ----------------------------------------------------
+
+        for identity, profile in (
+            persistent_profiles.items()
+        ):
+
+            if identity in (
+                identities_used_this_video
+            ):
+
+                continue
+
+            centroid = profile_centroid(
+                profile
+            )
+
+            if centroid is None:
+
+                continue
+
+            similarity = cosine_similarity(
+                embedding,
+                centroid
+            )
+
+            if similarity > best_similarity:
+
+                best_similarity = similarity
+
+                best_identity = identity
+
+        # ----------------------------------------------------
+        # Existing identity match
+        # ----------------------------------------------------
+
+        if (
+            best_identity is not None
+            and
+            best_similarity
+            >=
+            SIMILARITY_THRESHOLD
+        ):
+
+            identity = best_identity
+
+            profile = (
+                persistent_profiles[
+                    identity
+                ]
+            )
+
+            profile = update_profile(
+                profile,
+                embedding,
+                duration
+            )
+
+            persistent_profiles[
+                identity
+            ] = profile
+
+            save_profile(
+                identity,
+                profile
+            )
+
+            identity_matches.append({
+
+                "pyannote_speaker":
+                    speaker,
+
+                "identity":
+                    identity,
+
+                "similarity":
+                    round(
+                        best_similarity,
+                        4
+                    ),
+
+                "match":
+                    "EXISTING"
+            })
+
+        # ----------------------------------------------------
+        # No match -> create new identity
+        # ----------------------------------------------------
+
+        else:
+
+            identity, profile = (
+                create_new_profile(
+                    embedding,
+                    duration
+                )
+            )
+
+            persistent_profiles[
+                identity
+            ] = profile
+
+            identity_matches.append({
+
+                "pyannote_speaker":
+                    speaker,
+
+                "identity":
+                    identity,
+
+                "similarity":
+                    (
+                        round(
+                            best_similarity,
+                            4
+                        )
+                        if best_similarity >= 0
+                        else None
+                    ),
+
+                "match":
+                    "NEW"
+            })
+
+        identity_map[
+            speaker
+        ] = identity
+
+        identities_used_this_video.add(
+            identity
+        )
+
+    return (
+        identity_map,
+        identity_matches,
+        persistent_profiles
+    )
 
 
 # ============================================================
-# UNKNOWN SPEAKER ASSIGNMENT
+# UNKNOWN TURN ASSIGNMENT
 # ============================================================
 
 def assign_unknown_turns(
@@ -372,86 +1057,172 @@ def assign_unknown_turns(
     identity_map
 ):
 
-    result = []
+    output = []
 
-    for index, turn in enumerate(turns):
+    for index, turn in enumerate(
+        turns
+    ):
 
-        speaker = turn.get("speaker")
+        speaker = turn.get(
+            "speaker"
+        )
+
+        new_turn = dict(
+            turn
+        )
+
+        # ----------------------------------------------------
+        # Known speaker
+        # ----------------------------------------------------
 
         if speaker is not None:
 
-            new_turn = dict(turn)
-
-            new_turn["identity"] = identity_map.get(
-                speaker,
+            new_turn[
+                "identity"
+            ] = identity_map.get(
                 speaker
             )
 
-            result.append(new_turn)
+            new_turn[
+                "identity_inferred"
+            ] = False
+
+            output.append(
+                new_turn
+            )
 
             continue
 
         # ----------------------------------------------------
-        # UNKNOWN TURN
+        # Unknown speaker
         # ----------------------------------------------------
 
-        best_identity = None
-        best_gap = float("inf")
+        previous_identity = None
+
+        next_identity = None
 
         # Previous turn
         if index > 0:
 
-            previous = turns[index - 1]
+            previous = turns[
+                index - 1
+            ]
 
-            if previous.get("speaker") is not None:
+            previous_speaker = (
+                previous.get(
+                    "speaker"
+                )
+            )
+
+            if previous_speaker is not None:
 
                 gap = (
                     turn["start"]
-                    - previous["end"]
+                    -
+                    previous["end"]
                 )
 
-                if 0 <= gap <= MAX_UNKNOWN_GAP:
+                if (
+                    gap >= 0
+                    and
+                    gap <= MAX_UNKNOWN_GAP
+                ):
 
-                    best_identity = identity_map.get(
-                        previous["speaker"]
+                    previous_identity = (
+                        identity_map.get(
+                            previous_speaker
+                        )
                     )
-
-                    best_gap = gap
 
         # Next turn
         if index + 1 < len(turns):
 
-            next_turn = turns[index + 1]
+            following = turns[
+                index + 1
+            ]
 
-            if next_turn.get("speaker") is not None:
+            following_speaker = (
+                following.get(
+                    "speaker"
+                )
+            )
+
+            if following_speaker is not None:
 
                 gap = (
-                    next_turn["start"]
-                    - turn["end"]
+                    following["start"]
+                    -
+                    turn["end"]
                 )
 
-                if 0 <= gap <= MAX_UNKNOWN_GAP:
+                if (
+                    gap >= 0
+                    and
+                    gap <= MAX_UNKNOWN_GAP
+                ):
 
-                    if gap < best_gap:
-
-                        best_identity = identity_map.get(
-                            next_turn["speaker"]
+                    next_identity = (
+                        identity_map.get(
+                            following_speaker
                         )
+                    )
 
-                        best_gap = gap
+        # ----------------------------------------------------
+        # Infer only from nearby known speaker.
+        # If both sides exist they must agree.
+        # ----------------------------------------------------
 
-        new_turn = dict(turn)
+        identity = None
 
-        new_turn["identity"] = best_identity
+        inferred = False
 
-        if best_identity is not None:
-            new_turn["identity_inferred"] = True
-        else:
-            new_turn["identity_inferred"] = False
+        if (
+            previous_identity is not None
+            and
+            next_identity is not None
+            and
+            previous_identity
+            ==
+            next_identity
+        ):
 
-        result.append(new_turn)
+            identity = previous_identity
 
-    return result
+            inferred = True
+
+        elif (
+            previous_identity is not None
+            and
+            next_identity is None
+        ):
+
+            identity = previous_identity
+
+            inferred = True
+
+        elif (
+            next_identity is not None
+            and
+            previous_identity is None
+        ):
+
+            identity = next_identity
+
+            inferred = True
+
+        new_turn[
+            "identity"
+        ] = identity
+
+        new_turn[
+            "identity_inferred"
+        ] = inferred
+
+        output.append(
+            new_turn
+        )
+
+    return output
 
 
 # ============================================================
@@ -461,43 +1232,84 @@ def assign_unknown_turns(
 def main():
 
     print("=" * 70)
-    print("SPEAKER IDENTITY RECONSTRUCTION")
+    print(
+        "SPEAKER IDENTITY RECONSTRUCTION"
+    )
     print("=" * 70)
 
-    print(f"Audio:       {AUDIO_FILE}")
-    print(f"Input:       {INPUT_FILE}")
-    print(f"Output:      {OUTPUT_FILE}")
-    print(f"Embedding:   {EMBEDDING_MODEL}")
-    print(f"Threshold:   {SIMILARITY_THRESHOLD}")
-    print()
-
-    data = load_json(INPUT_FILE)
-
-    turns = data.get("turns", [])
-
     print(
-        f"Reconstructed turns: {len(turns)}"
-    )
-
-    print()
-    print("Loading audio...")
-
-    waveform, sample_rate = load_audio(
-        AUDIO_FILE
-    )
-
-    duration = waveform.shape[1] / sample_rate
-
-    print(
-        f"Audio duration: {duration:.3f}s"
+        f"Audio:       {AUDIO_FILE}"
     )
 
     print(
-        f"Sample rate:    {sample_rate} Hz"
+        f"Input:       {INPUT_FILE}"
+    )
+
+    print(
+        f"Output:      {OUTPUT_FILE}"
+    )
+
+    print(
+        f"Profiles:    {PROFILE_DIR}"
+    )
+
+    print(
+        f"Embedding:   {EMBEDDING_MODEL}"
+    )
+
+    print(
+        f"Threshold:   {SIMILARITY_THRESHOLD}"
     )
 
     print()
-    print("Loading speaker embedding model...")
+
+    ensure_profile_directory()
+
+    data = load_json(
+        INPUT_FILE
+    )
+
+    turns = data.get(
+        "turns",
+        []
+    )
+
+    print(
+        f"Reconstructed turns: "
+        f"{len(turns)}"
+    )
+
+    print()
+    print(
+        "Loading audio..."
+    )
+
+    waveform, sample_rate = (
+        load_audio(
+            AUDIO_FILE
+        )
+    )
+
+    duration = (
+        waveform.shape[1]
+        /
+        sample_rate
+    )
+
+    print(
+        f"Audio duration: "
+        f"{duration:.3f}s"
+    )
+
+    print(
+        f"Sample rate:    "
+        f"{sample_rate} Hz"
+    )
+
+    print()
+    print(
+        "Loading speaker embedding model..."
+    )
 
     model = Model.from_pretrained(
         EMBEDDING_MODEL
@@ -508,12 +1320,20 @@ def main():
         window="whole"
     )
 
-    print("Speaker embedding model loaded.")
+    print(
+        "Speaker embedding model loaded."
+    )
+
+    # --------------------------------------------------------
+    # Current video profiles
+    # --------------------------------------------------------
 
     print()
-    print("Building speaker profiles...")
+    print(
+        "Building speaker profiles..."
+    )
 
-    profiles = build_speaker_profiles(
+    profiles = build_profiles(
         turns,
         waveform,
         sample_rate,
@@ -521,13 +1341,14 @@ def main():
     )
 
     print()
-    print("Speaker profiles:")
 
-    for speaker, samples in profiles.items():
+    for speaker, samples in sorted(
+        profiles.items()
+    ):
 
         total_duration = sum(
-            sample["duration"]
-            for sample in samples
+            x["duration"]
+            for x in samples
         )
 
         print(
@@ -537,7 +1358,9 @@ def main():
         )
 
     print()
-    print("Calculating speaker centroids...")
+    print(
+        "Calculating speaker centroids..."
+    )
 
     centroids = calculate_centroids(
         profiles
@@ -548,105 +1371,175 @@ def main():
         f"{len(centroids)}"
     )
 
+    # --------------------------------------------------------
+    # Current-video similarity
+    # --------------------------------------------------------
+
+    comparisons = compare_speakers(
+        centroids
+    )
+
     print()
     print("=" * 80)
-    print("SPEAKER SIMILARITY")
+    print(
+        "SPEAKER SIMILARITY"
+    )
     print("=" * 80)
 
-    clusters, comparisons = cluster_speakers(
-        centroids,
-        SIMILARITY_THRESHOLD
-    )
+    if not comparisons:
+
+        print(
+            "No speaker pairs to compare."
+        )
 
     for comparison in comparisons:
 
+        status = (
+            "SAME"
+            if comparison[
+                "same_speaker"
+            ]
+            else "DIFFERENT"
+        )
+
         print(
-            f"{comparison['speaker_a']:<15} "
+            f"{comparison['speaker_a']:<15}"
             f"<-> "
-            f"{comparison['speaker_b']:<15} "
-            f"{comparison['similarity']:.4f}"
+            f"{comparison['speaker_b']:<15}"
+            f"{comparison['similarity']:>7.4f}"
+            f"  {status}"
         )
+
+    # --------------------------------------------------------
+    # Persistent identities
+    # --------------------------------------------------------
+
+    print()
+    print(
+        "Loading persistent speaker profiles..."
+    )
+
+    existing_profiles = (
+        load_persistent_profiles()
+    )
+
+    print(
+        f"Existing persistent identities: "
+        f"{len(existing_profiles)}"
+    )
+
+    print()
+    print(
+        "Matching speakers against persistent identities..."
+    )
+
+    (
+        identity_map,
+        identity_matches,
+        persistent_profiles
+    ) = assign_persistent_identities(
+        profiles,
+        centroids
+    )
 
     print()
     print("=" * 80)
-    print("SPEAKER CLUSTERS")
+    print(
+        "PERSISTENT SPEAKER IDENTITIES"
+    )
     print("=" * 80)
 
-    for index, cluster in enumerate(clusters):
+    for match in identity_matches:
 
-        identity = (
-            f"SPEAKER_"
-            f"{chr(ord('A') + index)}"
+        similarity = match[
+            "similarity"
+        ]
+
+        similarity_text = (
+            f"{similarity:.4f}"
+            if similarity is not None
+            else "-"
         )
 
         print(
-            f"{identity:<12}: "
-            f"{', '.join(sorted(cluster))}"
+            f"{match['pyannote_speaker']:<15}"
+            f"-> "
+            f"{match['identity']:<15}"
+            f"{match['match']:<10}"
+            f"similarity={similarity_text}"
         )
 
-    identity_map = create_identity_map(
-        clusters
-    )
+    # --------------------------------------------------------
+    # Assign identities to turns
+    # --------------------------------------------------------
 
     print()
-    print("=" * 80)
-    print("IDENTITY MAP")
-    print("=" * 80)
+    print(
+        "Assigning identities to dialogue turns..."
+    )
 
-    for diarization_speaker, identity in sorted(
-        identity_map.items()
-    ):
-
-        print(
-            f"{diarization_speaker:<15} "
-            f"-> {identity}"
+    identified_turns = (
+        assign_unknown_turns(
+            turns,
+            identity_map
         )
-
-    print()
-    print("Assigning identities to dialogue turns...")
-
-    identified_turns = assign_unknown_turns(
-        turns,
-        identity_map
     )
 
-    output = dict(data)
+    # --------------------------------------------------------
+    # Output
+    # --------------------------------------------------------
 
-    output["identity_model"] = EMBEDDING_MODEL
-    output["identity_similarity_threshold"] = (
-        SIMILARITY_THRESHOLD
+    output = dict(
+        data
     )
 
-    output["speaker_identity_map"] = identity_map
+    output[
+        "identity_model"
+    ] = EMBEDDING_MODEL
 
-    output["speaker_clusters"] = [
-        {
-            "identity": (
-                f"SPEAKER_"
-                f"{chr(ord('A') + index)}"
-            ),
-            "pyannote_speakers": sorted(cluster)
-        }
-        for index, cluster in enumerate(clusters)
-    ]
+    output[
+        "identity_similarity_threshold"
+    ] = SIMILARITY_THRESHOLD
 
-    output["similarity_comparisons"] = comparisons
+    output[
+        "persistent_profile_directory"
+    ] = str(
+        PROFILE_DIR
+    )
 
-    output["turns"] = identified_turns
+    output[
+        "speaker_identity_map"
+    ] = identity_map
+
+    output[
+        "speaker_identity_matches"
+    ] = identity_matches
+
+    output[
+        "speaker_similarity"
+    ] = comparisons
+
+    output[
+        "turns"
+    ] = identified_turns
 
     print()
     print("=" * 100)
-    print("IDENTIFIED SPEAKER TURNS")
+    print(
+        "IDENTIFIED SPEAKER TURNS"
+    )
     print("=" * 100)
 
     print(
         f"{'TIME':<17}"
         f"{'PYANNOTE':<15}"
-        f"{'IDENTITY':<12}"
+        f"{'IDENTITY':<15}"
         f"TEXT"
     )
 
-    print("-" * 100)
+    print(
+        "-" * 100
+    )
 
     for turn in identified_turns:
 
@@ -654,7 +1547,7 @@ def main():
             f"{turn['start']:6.2f} - "
             f"{turn['end']:6.2f}    "
             f"{str(turn.get('speaker')):<15}"
-            f"{str(turn.get('identity')):<12}"
+            f"{str(turn.get('identity')):<15}"
             f"{turn.get('text', '')}"
         )
 
@@ -664,11 +1557,21 @@ def main():
     )
 
     print()
-    print(f"Saved: {OUTPUT_FILE}")
+    print(
+        f"Saved: {OUTPUT_FILE}"
+    )
+
+    print()
+    print(
+        f"Persistent profiles: "
+        f"{PROFILE_DIR}"
+    )
 
     print()
     print("=" * 70)
-    print("SPEAKER IDENTITY RECONSTRUCTION: PASS")
+    print(
+        "SPEAKER IDENTITY RECONSTRUCTION: PASS"
+    )
     print("=" * 70)
 
 
